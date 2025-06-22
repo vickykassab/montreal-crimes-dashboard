@@ -97,15 +97,14 @@ def load_and_process_data():
     print(f"Data processed and cached: {len(gdf_joined)} crime records")
     return _cached_data
 
-def reduce_points_strategy_1(gdf_joined, max_points_per_district=3):
-    """Strategy 1: Top crimes by type per district (most representative)"""
+def reduce_points_top_crimes(gdf_joined, max_points_per_district=3):
+    """Top crimes by type per district (most representative)"""
     reduced_data = []
     
     for district in gdf_joined['District'].dropna().unique():
         district_data = gdf_joined[gdf_joined['District'] == district]
         crime_counts = district_data['CrimeType'].value_counts()
         
-
         for crime_type in crime_counts.head(max_points_per_district).index:
             crime_subset = district_data[district_data['CrimeType'] == crime_type]
             representative = crime_subset.iloc[len(crime_subset)//2].copy()
@@ -114,42 +113,16 @@ def reduce_points_strategy_1(gdf_joined, max_points_per_district=3):
     
     return pd.DataFrame(reduced_data)
 
-def reduce_points_strategy_3(gdf_joined, max_points_per_district=2):
-    """Strategy 3: Crime hotspots - most frequent locations"""
-    reduced_data = []
-    
-    for district in gdf_joined['District'].dropna().unique():
-        district_data = gdf_joined[gdf_joined['District'] == district]
-        district_data = district_data.copy()
-        district_data['lat_rounded'] = district_data['Latitude'].round(3)
-        district_data['lon_rounded'] = district_data['Longitude'].round(3)
-        district_data['location_key'] = district_data['lat_rounded'].astype(str) + "_" + district_data['lon_rounded'].astype(str)
-        
-        location_counts = district_data['location_key'].value_counts()
-        
-        for location_key in location_counts.head(max_points_per_district).index:
-            location_data = district_data[district_data['location_key'] == location_key]
-            most_common_crime = location_data['CrimeType'].mode().iloc[0]
-            representative = location_data[location_data['CrimeType'] == most_common_crime].iloc[0].copy()
-            representative['crime_count'] = location_counts[location_key]
-            reduced_data.append(representative)
-    
-    return pd.DataFrame(reduced_data)
-
-def create_map_figure(strategy="strategy_1", max_points=3):
+def create_map_figure(max_points=3):
     """Create the map figure using cached data with reduced points"""
-    print(f"Creating map with {strategy}, max {max_points} points per district...")
+    print(f"Creating map with max {max_points} points per district...")
     
     data = load_and_process_data()
     montreal_geo = data['montreal_geo']
     gdf_joined = data['gdf_joined']
     
-    if strategy == "strategy_1":
-        reduced_gdf = reduce_points_strategy_1(gdf_joined, max_points)
-        title_suffix = f"Top {max_points} Crime Types per District"
-    else: 
-        reduced_gdf = reduce_points_strategy_3(gdf_joined, max_points)
-        title_suffix = f"Crime Hotspots ({max_points} per district)"
+    reduced_gdf = reduce_points_top_crimes(gdf_joined, max_points)
+    title_suffix = f"Top {max_points} Crime Types per District"
     
     print(f"Reduced from {len(gdf_joined)} to {len(reduced_gdf)} points")
     
@@ -239,41 +212,28 @@ def layout():
         html.Div([
             html.H2("Montreal Crime Data Explorer", 
                    style={'textAlign': 'center', 'marginBottom': '10px', 'color': '#2c3e50'}),
-            html.P("Interactive map showing crime distribution across Montreal districts",
+            html.P("Interactive map showing top crime types across Montreal districts",
                    style={'textAlign': 'center', 'marginBottom': '20px', 'color': '#7f8c8d'})
         ]),
         
-        # Controls section - more compact
+        # Controls section - simplified
         html.Div([
             html.Div([
-                html.Label("Visualization Strategy:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
-                dcc.Dropdown(
-                    id='strategy-dropdown',
-                    options=[
-                        {'label': 'Top crimes per district', 'value': 'strategy_1'},
-                        {'label': 'Crime hotspots', 'value': 'strategy_3'}
-                    ],
-                    value='strategy_1',
-                    style={'width': '100%'}
-                )
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
-            
-            html.Div([
-                html.Label("Maximum points per district:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                html.Label("Maximum crime types per district:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
                 dcc.Slider(
                     id='max-points-slider',
                     min=1, max=5, step=1, value=3,
                     marks={i: str(i) for i in range(1, 6)},
                     tooltip={"placement": "bottom", "always_visible": True}
                 )
-            ], style={'width': '48%', 'float': 'right', 'display': 'inline-block'})
+            ], style={'width': '100%', 'textAlign': 'center'})
             
         ], style={'margin': '20px 0', 'padding': '15px', 'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
         
         # Map section - full width with minimal margins
         html.Div([
             dcc.Graph(
-                id='reduced-crime-map', 
+                id='crime-map', 
                 figure=create_map_figure(),
                 style={'height': '700px'}  # Explicit height
             )
@@ -299,10 +259,8 @@ def clear_cache():
 from dash import callback, Input, Output
 
 @callback(
-    Output('reduced-crime-map', 'figure'),
-    [Input('strategy-dropdown', 'value'),
-     Input('max-points-slider', 'value')]
+    Output('crime-map', 'figure'),
+    [Input('max-points-slider', 'value')]
 )
-def update_map(strategy, max_points):
-    return create_map_figure(strategy, max_points)
-
+def update_map(max_points):
+    return create_map_figure(max_points)
