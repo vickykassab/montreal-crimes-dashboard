@@ -1,22 +1,3 @@
-"""
-OPTIMIZED MONTREAL CRIME MAP - PERFORMANCE ENHANCED VERSION
-
-SETUP FOR MAXIMUM PERFORMANCE:
-1. Your montreal.json is at: src/data/montreal.json ✓
-2. For even better performance (optional), copy montreal.json to assets/montreal.json
-   and change line in create_initial_figure():
-   geojson="assets/montreal.json"  # Enable browser caching
-3. Uncomment preload_data() at bottom if you want data loaded on app start
-
-PERFORMANCE IMPROVEMENTS:
-- 3-5x faster initial load
-- 10-20x faster slider updates  
-- 40-50% less memory usage
-- Aggressive caching of all reduction levels
-- Vectorized data operations
-- Optimized figure updates
-"""
-
 from dash import html, dcc, callback, Input, Output, Patch
 import pandas as pd
 import geopandas as gpd
@@ -45,96 +26,91 @@ def base_hover_template():
     return "District: %{location}<extra></extra>"
 
 def _get_montreal_json_path():
-    """Trouve le chemin correct vers le fichier montreal.json"""
+    """Find the correct path to montreal.json, prioritizing assets for frontend caching"""
     global _cached_geojson_path
     if _cached_geojson_path:
         return _cached_geojson_path
-        
-    # Your confirmed path first
-    primary_path = "src/data/montreal.json"
+
+    # Primary path for server-side processing
+    primary_path = "assets/montreal.json"
     if os.path.exists(primary_path):
         _cached_geojson_path = primary_path
         return primary_path
-    
-    # Fallback paths
+
+    # Fallbacks for dev
     possible_paths = [
-        "data/montreal.json", 
+        "src/data/montreal.json",
+        "data/montreal.json",
         "../data/montreal.json",
         os.path.join(os.path.dirname(__file__), "data", "montreal.json"),
         os.path.join(os.path.dirname(__file__), "..", "data", "montreal.json")
     ]
-    
+
     for path in possible_paths:
         if os.path.exists(path):
             _cached_geojson_path = path
             return path
-    
-    _cached_geojson_path = primary_path  # Default to your path
+
+    # Final fallback
+    _cached_geojson_path = primary_path
     return _cached_geojson_path
+
 
 def load_and_process_data():
     """OPTIMIZATION 2: Load data once with minimal processing"""
     global _cached_data
-    
+
     if _cached_data is not None:
         return _cached_data
-    
+
     print("Loading and preprocessing data for optimal performance...")
-    
+
     CRIME_TRANSLATION = {
         "Vol De Véhicule À Moteur": "Motor Vehicle Theft",
-        "Méfait": "Mischief", 
+        "Méfait": "Mischief",
         "Vol Dans / Sur Véhicule À Moteur": "Theft From/In Motor Vehicle",
         "Introduction": "Breaking And Entering",
         "Vols Qualifiés": "Robbery",
         "Infractions Entrainant La Mort": "Offences Causing Death"
     }
-    
-    # Load GeoJSON once
-    montreal_json_path = _get_montreal_json_path()
-    with open(montreal_json_path) as f:
-        montreal_geo = json.load(f)
 
-    # OPTIMIZATION 3: Minimal geodataframe operations 
+    # Load districts GeoDataFrame
+    montreal_json_path = _get_montreal_json_path()
     gdf_districts = gpd.read_file(montreal_json_path)
-    
-    # Get preprocessed data from data_manager
+
+    # Get processed crime data
     df = data_manager.get_data_for_viz3()
 
-    # OPTIMIZATION 4: Vectorized operations and fewer copies
     df = df.rename(columns={
         "CATEGORIE": "CrimeType",
-        "LONGITUDE": "Longitude", 
+        "LONGITUDE": "Longitude",
         "LATITUDE": "Latitude",
         "PDQ": "PDQ"
     }).dropna(subset=["Longitude", "Latitude"])
 
-    # Vectorized string operations
     df["CrimeType"] = df["CrimeType"].str.strip().str.lower().str.title()
     df["CrimeType"] = df["CrimeType"].map(CRIME_TRANSLATION).fillna(df["CrimeType"])
     df["PDQ"] = df["PDQ"].astype(str)
 
-    # Geographic filtering
     df = df[
-        (df["Latitude"].between(45.40, 45.70)) & 
+        (df["Latitude"].between(45.40, 45.70)) &
         (df["Longitude"].between(-73.95, -73.45))
     ].copy()
 
-    # OPTIMIZATION 5: Batch geometry creation and spatial join
     df["geometry"] = gpd.points_from_xy(df["Longitude"], df["Latitude"])
     gdf_crimes = gpd.GeoDataFrame(df, geometry="geometry", crs=gdf_districts.crs)
-    
+
     gdf_joined = gpd.sjoin(gdf_crimes, gdf_districts, how="left", predicate="within")
     gdf_joined["District"] = gdf_joined["NOM"]
-    
+
     _cached_data = {
-        'montreal_geo': montreal_geo,
         'gdf_joined': gdf_joined,
         'districts': gdf_districts
     }
-    
+
     print(f"Data optimized and cached: {len(gdf_joined)} crime records")
     return _cached_data
+
 
 def precompute_reduced_data(gdf_joined, max_points_per_district):
     """OPTIMIZATION 6: Precompute and cache different reduction levels"""
@@ -169,25 +145,19 @@ def precompute_reduced_data(gdf_joined, max_points_per_district):
     return result
 
 def create_initial_figure():
-    """OPTIMIZATION 8: Create base figure once and reuse structure"""
-    print("Creating optimized base figure...")
-    
+    """OPTIMIZATION 8: Create base figure using browser-cached geojson"""
+    print("Creating optimized base figure with browser-cached geojson...")
+
     data = load_and_process_data()
-    montreal_geo = data['montreal_geo']
-    
-    fig = go.Figure()
-    
-    # OPTIMIZATION 9: For maximum browser caching performance, 
-    # copy montreal.json to assets/montreal.json and use:
-    # geojson="assets/montreal.json"
-    # For now, using the loaded JSON object
-    
-    # Base choropleth layer with minimal processing
-    neighborhoods = [feature["properties"]["NOM"] for feature in montreal_geo["features"]]
+    districts = data['districts']
+
+    neighborhoods = districts["NOM"].tolist()
     z_vals = [1] * len(neighborhoods)
 
+    fig = go.Figure()
+
     fig.add_choroplethmapbox(
-        geojson=montreal_geo,  # Using loaded JSON object
+        geojson="assets/montreal.json",  # served as static file
         locations=neighborhoods,
         z=z_vals,
         featureidkey="properties.NOM",
@@ -199,7 +169,6 @@ def create_initial_figure():
         name="Districts"
     )
 
-    # Enhanced layout - set once
     fig.update_layout(
         mapbox_style="white-bg",
         mapbox_zoom=8.5,
@@ -209,7 +178,7 @@ def create_initial_figure():
         margin=dict(t=60, r=10, l=10, b=10),
         legend=dict(
             orientation="v",
-            yanchor="top", 
+            yanchor="top",
             y=1,
             xanchor="left",
             x=1.02,
@@ -224,8 +193,9 @@ def create_initial_figure():
             pad=dict(t=20)
         )
     )
-    
+
     return fig
+
 
 def update_crime_traces(fig, max_points):
     """OPTIMIZATION 10: Update only crime traces, not entire figure"""
@@ -367,4 +337,4 @@ def preload_data():
         print(f"Preload failed: {e}")
 
 # Uncomment to preload data on import:
-# preload_data()
+preload_data()
