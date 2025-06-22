@@ -8,10 +8,9 @@ import numpy as np
 import os
 from data_manager import data_manager
 
-# OPTIMIZATION 1: More aggressive caching with preprocessed data structures
 _cached_figure = None
 _cached_data = None
-_cached_reduced_data = {}  # Cache different reduction levels
+_cached_reduced_data = {}  
 _cached_geojson_path = None
 
 def crime_hover_template(crime_type):
@@ -31,13 +30,11 @@ def _get_montreal_json_path():
     if _cached_geojson_path:
         return _cached_geojson_path
 
-    # Primary path for server-side processing
     primary_path = "assets/montreal.json"
     if os.path.exists(primary_path):
         _cached_geojson_path = primary_path
         return primary_path
 
-    # Fallbacks for dev
     possible_paths = [
         "src/data/montreal.json",
         "data/montreal.json",
@@ -51,7 +48,6 @@ def _get_montreal_json_path():
             _cached_geojson_path = path
             return path
 
-    # Final fallback
     _cached_geojson_path = primary_path
     return _cached_geojson_path
 
@@ -74,11 +70,9 @@ def load_and_process_data():
         "Infractions Entrainant La Mort": "Offences Causing Death"
     }
 
-    # Load districts GeoDataFrame
     montreal_json_path = _get_montreal_json_path()
     gdf_districts = gpd.read_file(montreal_json_path)
-
-    # Get processed crime data
+    
     df = data_manager.get_data_for_viz3()
 
     df = df.rename(columns={
@@ -122,18 +116,15 @@ def precompute_reduced_data(gdf_joined, max_points_per_district):
     
     print(f"Precomputing reduced dataset for {max_points_per_district} points per district...")
     
-    # OPTIMIZATION 7: Vectorized groupby operations
     district_groups = gdf_joined.dropna(subset=['District']).groupby('District')
     reduced_data = []
     
     for district, district_data in district_groups:
-        # Get top crime types efficiently
         crime_counts = district_data['CrimeType'].value_counts()
         top_crimes = crime_counts.head(max_points_per_district)
         
         for crime_type, count in top_crimes.items():
             crime_subset = district_data[district_data['CrimeType'] == crime_type]
-            # Take middle point as representative
             representative_idx = len(crime_subset) // 2
             representative = crime_subset.iloc[representative_idx].copy()
             representative['crime_count'] = count
@@ -157,7 +148,7 @@ def create_initial_figure():
     fig = go.Figure()
 
     fig.add_choroplethmapbox(
-        geojson="assets/montreal.json",  # served as static file
+        geojson="assets/montreal.json", 
         locations=neighborhoods,
         z=z_vals,
         featureidkey="properties.NOM",
@@ -212,15 +203,14 @@ def update_crime_traces(fig, max_points):
         "Offences Causing Death": "#00BCD4"
     }
 
-    # Remove existing crime traces (keep district base layer)
-    fig.data = fig.data[:1]  # Keep only the choropleth base
+
+    fig.data = fig.data[:1]
     
-    # Add optimized crime traces
+
     for crime_type, color in COLOR_MAP.items():
         crime_data = reduced_gdf[reduced_gdf["CrimeType"] == crime_type]
         
         if not crime_data.empty:
-            # Vectorized size calculation
             base_size = 8
             sizes = np.minimum(20, base_size + (crime_data['crime_count'].fillna(0) / 10))
 
@@ -238,7 +228,7 @@ def update_crime_traces(fig, max_points):
                 hovertemplate=crime_hover_template(crime_type)
             ))
 
-    # Update title
+
     fig.update_layout(
         title_text=f"Montreal Crime Map - Top {max_points} Crime Types per District"
     )
@@ -248,15 +238,14 @@ def update_crime_traces(fig, max_points):
 def layout():
     """OPTIMIZATION 11: Simplified layout with faster initial load"""
     return html.Div([
-        # Header
+
         html.Div([
             html.H2("Montreal Crime Data Explorer", 
                    style={'textAlign': 'center', 'marginBottom': '10px', 'color': '#2c3e50'}),
             html.P("Interactive map showing top crime types across Montreal districts",
                    style={'textAlign': 'center', 'marginBottom': '20px', 'color': '#7f8c8d'})
         ]),
-        
-        # Controls
+    
         html.Div([
             html.Div([
                 html.Label("Maximum crime types per district:", 
@@ -271,7 +260,7 @@ def layout():
         ], style={'margin': '20px 0', 'padding': '15px', 
                  'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
         
-        # Map with loading
+
         html.Div([
             dcc.Loading(
                 dcc.Graph(
@@ -299,42 +288,20 @@ def clear_cache():
     _cached_geojson_path = None
     data_manager.clear_cache()
     print("All caches cleared")
-
-# OPTIMIZATION 12: Use Patch for partial updates instead of full figure recreation
+    
 @callback(
     Output('crime-map', 'figure'),
     [Input('max-points-slider', 'value')]
 )
 def update_map(max_points):
     """Fast update using optimized trace management"""
-    # For initial load, create full figure
-    if max_points == 3:  # Default value - could be any logic
+    if max_points == 3: 
         return update_crime_traces(create_initial_figure(), max_points)
     
-    # For subsequent updates, use Patch for even faster updates
-    # This requires Dash 2.9+ 
     try:
-        # Get current figure and update only traces
         current_fig = create_initial_figure()
         return update_crime_traces(current_fig, max_points)
     except Exception as e:
         print(f"Update error: {e}")
-        # Fallback to full recreation
         return update_crime_traces(create_initial_figure(), max_points)
 
-# OPTIMIZATION 13: Preload data on module import (if desired)
-def preload_data():
-    """Optional: Preload data when module is imported"""
-    try:
-        load_and_process_data()
-        # Precompute common reduction levels
-        data = _cached_data
-        if data:
-            for max_points in [1, 2, 3, 4, 5]:
-                precompute_reduced_data(data['gdf_joined'], max_points)
-        print("Data preloaded successfully")
-    except Exception as e:
-        print(f"Preload failed: {e}")
-
-# Uncomment to preload data on import:
-preload_data()
